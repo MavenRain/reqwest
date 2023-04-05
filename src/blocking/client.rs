@@ -1059,7 +1059,7 @@ impl ClientHandle {
     fn execute_request(&self, req: Request) -> crate::Result<Response> {
         let (tx, rx) = oneshot::channel();
         let (req, body) = req.into_async();
-        let url = req.url().clone();
+        let _url = req.url().clone();
         let timeout = req.timeout().copied().or(self.timeout.0);
 
         self.inner
@@ -1069,28 +1069,37 @@ impl ClientHandle {
             .send((req, tx))
             .expect("core thread panicked");
 
-        let result: Result<crate::Result<async_impl::Response>, wait::Waited<crate::Error>> =
-            if let Some(body) = body {
-                let f = async move {
-                    body.send().await?;
-                    rx.await.map_err(|_canceled| event_loop_panicked())
-                };
-                wait::timeout(f, timeout)
-            } else {
-                let f = async move { rx.await.map_err(|_canceled| event_loop_panicked()) };
-                wait::timeout(f, timeout)
-            };
+        //let result: Result<crate::Result<async_impl::Response>, wait::Waited<crate::Error>> =
+        //    if let Some(body) = body {
+        //        let f = async move {
+        //            body.send().await?;
+        //            rx.await.map_err(|_canceled| event_loop_panicked())
+        //        };
+        //        wait::timeout(f, timeout)
+        //    } else {
+        //        let f = async move { rx.await.map_err(|_canceled| event_loop_panicked()) };
+        //        wait::timeout(f, timeout)
+        //    };
+        Ok(Response::new(
+            wait::timeout(async move {
+                body.unwrap().send().await.unwrap();
+                rx.await.unwrap()
+            }, timeout).unwrap(),
+            timeout,
+            KeepCoreThreadAlive(Some(self.inner.clone())),
+        ))
+        
 
-        match result {
-            Ok(Err(err)) => Err(err.with_url(url)),
-            Ok(Ok(res)) => Ok(Response::new(
-                res,
-                timeout,
-                KeepCoreThreadAlive(Some(self.inner.clone())),
-            )),
-            Err(wait::Waited::TimedOut(e)) => Err(crate::error::request(e).with_url(url)),
-            Err(wait::Waited::Inner(err)) => Err(err.with_url(url)),
-        }
+        //match result {
+        //    Ok(Err(err)) => Err(err.with_url(url)),
+        //    Ok(Ok(res)) => Ok(Response::new(
+        //        res,
+        //        timeout,
+        //        KeepCoreThreadAlive(Some(self.inner.clone())),
+        //    )),
+        //    Err(wait::Waited::TimedOut(e)) => Err(crate::error::request(e).with_url(url)),
+        //    Err(wait::Waited::Inner(err)) => Err(err.with_url(url)),
+        //}
     }
 }
 
